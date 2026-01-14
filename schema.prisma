@@ -1,0 +1,256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  role          UserRole  @default(USER)
+  verified      Boolean   @default(false)
+  verifyToken   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  watchlists    Watchlist[]
+  alerts        Alert[]
+  
+  @@map("users")
+}
+
+model Ticker {
+  id              String    @id @default(cuid())
+  symbol          String    @unique
+  name            String
+  sector          String?
+  exchange        String?
+  marketCap       Float?
+  float           Float?
+  sharesOutstanding Float?
+  currentPrice    Float?
+  volume          Float?
+  change24h       Float?
+  changePercent24h Float?
+  lastUpdated     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  createdBy       String?   // Admin user ID who created this
+  updatedBy       String?   // Admin user ID who last updated this
+  
+  priceHistory    PriceHistory[]
+  catalysts       Catalyst[]
+  news            News[]
+  watchlists      Watchlist[]
+  alerts          Alert[]
+  
+  @@index([symbol])
+  @@index([sector])
+  @@map("tickers")
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  tickerId  String
+  date      DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  createdAt DateTime @default(now())
+  
+  ticker    Ticker   @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  
+  @@unique([tickerId, date])
+  @@index([tickerId, date])
+  @@map("price_history")
+}
+
+model Catalyst {
+  id          String        @id @default(cuid())
+  tickerId    String
+  title       String
+  description String?
+  date        DateTime
+  category    CatalystCategory
+  impactLevel ImpactLevel   @default(MEDIUM)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  createdBy   String?       // Admin user ID who created this
+  updatedBy   String?       // Admin user ID who last updated this
+  
+  ticker      Ticker        @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  
+  @@index([tickerId, date])
+  @@index([date])
+  @@map("catalysts")
+}
+
+model News {
+  id          String   @id @default(cuid())
+  tickerId    String
+  headline    String   @db.VarChar(500)
+  summary     String?  @db.Text
+  source      String   @db.VarChar(100)
+  url         String?
+  urlHash     String?
+  imageUrl    String?
+  author      String?  @db.VarChar(200)
+  publishedAt DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?  // Admin user ID who created this
+  updatedBy   String?  // Admin user ID who last updated this
+  
+  ticker      Ticker   @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  
+  @@unique([tickerId, urlHash], name: "news_ticker_url_unique")
+  @@index([tickerId, publishedAt(sort: Desc)], name: "news_ticker_published")
+  @@index([publishedAt(sort: Desc)], name: "news_published")
+  @@map("news")
+}
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  userId    String
+  tickerId  String
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticker    Ticker   @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, tickerId])
+  @@map("watchlists")
+}
+
+model Alert {
+  id            String    @id @default(cuid())
+  userId        String
+  tickerId      String
+  type          AlertType
+  priceAbove    Float?
+  priceBelow    Float?
+  volumeAbove   Float?
+  changePercent Float?
+  isActive      Boolean   @default(true)
+  lastTriggered DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticker        Ticker    @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  alertEvents   AlertEvent[]
+  
+  @@index([isActive, tickerId])
+  @@index([userId])
+  @@map("alerts")
+}
+
+model AlertEvent {
+  id            String      @id @default(cuid())
+  alertId       String
+  triggeredAt   DateTime    @default(now())
+  timeBucket    Int         // 5-minute bucket for idempotency
+  measuredValue Float
+  sentAt        DateTime?
+  status        AlertStatus @default(PENDING)
+  errorMessage  String?
+  
+  alert         Alert       @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  
+  @@index([alertId, triggeredAt])
+  @@index([status, triggeredAt])
+  @@unique([alertId, timeBucket], name: "alert_event_idempotency_5m")
+  @@map("alert_events")
+}
+
+model ImportJob {
+  id            String    @id @default(cuid())
+  type          JobType
+  status        JobStatus @default(PENDING)
+  fileName      String?
+  fileSizeBytes Int?
+  totalRows     Int?
+  successRows   Int?
+  failedRows    Int?
+  errorSample   String?   @db.Text  // JSON array of first N errors
+  errorFileUrl  String?   // URL to downloadable error CSV
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  createdBy     String?   // Admin user ID
+  
+  @@index([type, status])
+  @@index([startedAt])
+  @@index([createdBy])
+  @@map("import_jobs")
+}
+
+model JobLock {
+  id        String   @id @default(cuid())
+  jobType   String   @unique
+  lockedAt  DateTime @default(now())
+  lockedBy  String   // Process/instance identifier
+  expiresAt DateTime
+  
+  @@map("job_locks")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum CatalystCategory {
+  EARNINGS
+  FDA_APPROVAL
+  PARTNERSHIP
+  ACQUISITION
+  PRODUCT_LAUNCH
+  CLINICAL_TRIAL
+  REGULATORY
+  INSIDER_BUYING
+  SHORT_SQUEEZE
+  OTHER
+}
+
+enum ImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertType {
+  PRICE_ABOVE
+  PRICE_BELOW
+  VOLUME_ABOVE
+  CHANGE_PERCENT
+}
+
+enum AlertStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum JobType {
+  PRICE_HISTORY_CSV
+  PRICE_HISTORY_API
+  ALERT_EVALUATION
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SUCCESS_WITH_ERRORS
+}
